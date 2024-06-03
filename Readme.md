@@ -1,0 +1,1 @@
+add FF encodeing for NeRF-LOAM
