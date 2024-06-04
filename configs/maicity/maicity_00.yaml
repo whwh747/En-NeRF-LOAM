@@ -4,7 +4,7 @@ exp_name: maicity/sqeuence00
 
 
 data_specs:
-  data_path: '/home/pl21n4/dataset/mai_city/bin/sequences/00'
+  data_path: '/disk2/wh/code/nerfloam-modify/data/mai_city/bin/sequences/00'
   use_gt: False
   max_depth: 50.0
   min_depth: 1.5

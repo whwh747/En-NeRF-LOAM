@@ -5,7 +5,7 @@ exp_name: kitti/sqeuence00
 
 
 data_specs:
-  data_path: '/home/pl21n4/dataset/kitti/dataset/sequences/00'
+  data_path: '/disk2/wh/code/nerfloam-modify/data/kitti_example/sequences/00'
   use_gt: False
   max_depth: 40
   min_depth: 5

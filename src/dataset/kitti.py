@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 import sys
 from scipy.spatial import cKDTree
 
-patchwork_module_path ="/home/pl21n4/Programmes/patchwork-plusplus/build/python_wrapper"
+patchwork_module_path ="/disk2/wh/code/NeRF-LOAM/patchwork-plusplus/python_wrapper"
 sys.path.insert(0, patchwork_module_path)
 import pypatchworkpp
 params = pypatchworkpp.Parameters()

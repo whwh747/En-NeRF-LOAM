@@ -13,7 +13,7 @@ decoder_specs:
   width: 256
   in_dim: 16
   skips: []
-  embedder: none
+  embedder: FFE
   multires: 0
 
 tracker_specs:

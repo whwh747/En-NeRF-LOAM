@@ -5,7 +5,7 @@ exp_name: ncd/quad
 
 
 data_specs:
-  data_path: '/home/pl21n4/dataset/ncd_example/quad'
+  data_path: '/disk2/wh/code/nerfloam-modify/data/ncd_example/quad'
   use_gt: False
   max_depth: 50
   min_depth: 1.5

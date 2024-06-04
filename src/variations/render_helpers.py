@@ -142,9 +142,10 @@ def get_scores(sdf_network, map_states, voxel_size, bits=8):
             voxel_size
         )
         field_inputs = field_inputs["emb"]
-
+        embeddwithpoint = torch.cat((field_inputs, sampled_xyz), dim=1)
         # evaluation with density
-        sdf_values = sdf_network.get_values(field_inputs.float().cuda())
+        # sdf_values = sdf_network.get_values(field_inputs.float().cuda())
+        sdf_values = sdf_network.get_values(embeddwithpoint.float().cuda())
         return sdf_values.reshape(-1, res ** 3, 1).detach().cpu()
 
     return torch.cat([
@@ -275,12 +276,15 @@ def render_rays(
             profiler.tok("get_features")
         # add coordinate information
         chunk_inputs = chunk_inputs["emb"]
+        points = chunk_samples['sampled_point_xyz']
+        embeddwithpoint = torch.cat((chunk_inputs, points), dim=1)
 
         # forward implicit fields
         if profiler is not None:
             profiler.tick("render_core")
 
-        chunk_outputs = sdf_network(chunk_inputs)
+        # chunk_outputs = sdf_network(chunk_inputs)
+        chunk_outputs = sdf_network(embeddwithpoint)
         if profiler is not None:
             profiler.tok("render_core")
         final_xyz.append(xyz)
