@@ -103,6 +103,7 @@ class Decoder(nn.Module):
                  multires=6,
                  embedder='none',
                  point_dim=3,
+                 level = 2,
                  local_coord=False,
                  **kwargs) -> None:
         super().__init__()
@@ -111,27 +112,39 @@ class Decoder(nn.Module):
         self.skips = skips
         self.point_dim = point_dim
         gaussian_scale = 50.0
-        embedding_size = 16
+        embedding_size = 8
+        self.embedder_name = embedder
+        self.in_dim = in_dim
+        self.level = level
+        print('use ', self.level, 'level!!!')
+        self.in_dim = self.in_dim * self.level
+        print('in_dim = ', self.in_dim)
         if embedder == 'nerf':
-            self.pe = Nerf_positional_embedding(in_dim, multires)
+            multires = 10
+            self.pe = Nerf_positional_embedding(3, multires)
+            self.embedding_size = multires * 3 * 2 + self.in_dim
         elif embedder == 'none':
-            self.pe = Same(in_dim)
-        elif embedder == 'gaussian':
-            self.pe = GaussianFourierFeatureTransform(in_dim)
-        elif embedder == 'FFE':
+            self.pe = Same(3)
+            self.embedding_size = 3
+        elif embedder == 'ffe':
             self.pe = FFEncoder(gaussian_scale, embedding_size, 3)
+            self.embedding_size = self.in_dim + 3 * embedding_size * 2
         else:
             raise NotImplementedError("unknown positional encoder")
+        
+        print('embedding_size = ', self.embedding_size)
         self.pts_linears = nn.ModuleList(
-            [nn.Linear(16+3*embedding_size*2, width)] + [nn.Linear(width, width) if i not in self.skips else nn.Linear(width + self.pe.embedding_size, width) for i in range(depth-1)])
+            [nn.Linear(self.embedding_size, width)] + [nn.Linear(width, width) if i not in self.skips else nn.Linear(width + self.pe.embedding_size, width) for i in range(depth-1)])
         self.sdf_out = nn.Linear(width, 1)
 
     def get_values(self, input):
-        embeddings, xyz = torch.split(input, [16, 3], dim=1)
+        embeddings, xyz = torch.split(input, [self.in_dim, 3], dim=1)
         # 只对坐标编码
         x = self.pe(xyz)
-        # 这里维度变了   16 + 3 * embedding_size * 2
-        h = torch.cat((embeddings, x), dim=1)
+        if self.embedder_name == 'none':
+            h = embeddings
+        else:
+            h = torch.cat((embeddings, x), dim=1)
         for i, l in enumerate(self.pts_linears):
             h = self.pts_linears[i](h)
             h = F.relu(h)

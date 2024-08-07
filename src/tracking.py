@@ -104,6 +104,8 @@ class Tracking:
         self.profiler.tick("before track2222")
         map_states = share_data.states
         map_states["voxel_vertex_emb"] = map_states["voxel_vertex_emb"].cuda()
+        map_states["voxel_vertex_emb_fa"] = map_states["voxel_vertex_emb_fa"].cuda()
+        map_states["voxel_vertex_emb_fafa"] = map_states["voxel_vertex_emb_fafa"].cuda()
         self.profiler.tok("before track2222")
 
         constant_move_pose = self.last_frame.get_pose().detach()

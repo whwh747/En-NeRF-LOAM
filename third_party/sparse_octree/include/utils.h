@@ -1,6 +1,6 @@
 #pragma once
 #include <iostream>
-#include <eigen3/Eigen/Dense>
+#include </usr/include/eigen3/Eigen/Dense>
 
 #define MAX_BITS 21
 // #define SCALE_MASK ((uint64_t)0x1FF)

@@ -62,6 +62,7 @@ def offset_points(point_xyz, quarter_voxel=1, offset_only=False, bits=2):
 @torch.enable_grad()
 def get_embeddings(sampled_xyz, point_xyz, point_feats, voxel_size):
     # tri-linear interpolation
+    # 输入：采样点的坐标  对应体素的坐标 对应体素的embedding  体素大小
     p = ((sampled_xyz - point_xyz) / voxel_size + 0.5).unsqueeze(1)
     q = offset_points(p, 0.5, offset_only=True).unsqueeze(0) + 0.5
     feats = trilinear_interp(p, q, point_feats).float()
@@ -77,7 +78,16 @@ def get_features(samples, map_states, voxel_size):
     point_xyz = map_states["voxel_center_xyz"].cuda()
     values = map_states["voxel_vertex_emb"]
     point_id2embedid = map_states["voxel_id2embedding_id"]
+
+    point_idx_fa = map_states["voxel_vertex_idx_fa"].cuda()
+    values_fa = map_states["voxel_vertex_emb_fa"]
+    point_id2embedid_fa = map_states["voxel_id2embedding_id_fa"]
+
+    point_idx_fafa = map_states["voxel_vertex_idx_fafa"].cuda()
+    values_fafa = map_states["voxel_vertex_emb_fafa"]
+    point_id2embedid_fafa = map_states["voxel_id2embedding_id_fafa"]
     # ray point samples
+    # sampled_idx是采样点对应的树节点的index_
     sampled_idx = samples["sampled_point_voxel_idx"].long()
     sampled_xyz = samples["sampled_point_xyz"]
     sampled_dis = samples["sampled_point_distance"]
@@ -87,9 +97,30 @@ def get_features(samples, map_states, voxel_size):
     flatten_selected_points_idx = selected_points_idx.view(-1)
     embed_idx = F.embedding(flatten_selected_points_idx.cpu(), point_id2embedid).squeeze(-1)
     point_feats = F.embedding(embed_idx.cuda(), values).view(point_xyz.size(0), -1)
+    
+    selected_points_idx_fa = F.embedding(sampled_idx, point_idx_fa)
+    flatten_selected_points_idx_fa = selected_points_idx_fa.view(-1)
+    if (flatten_selected_points_idx_fa==-1).any() == True:
+        flatten_selected_points_idx_fa = flatten_selected_points_idx-1
+    embed_idx_fa = F.embedding(flatten_selected_points_idx_fa.cpu(), point_id2embedid_fa).squeeze(-1)
+    point_feats_fa = F.embedding(embed_idx_fa.cuda(), values_fa).view(point_xyz.size(0), -1)
+
+    selected_points_idx_fafa = F.embedding(sampled_idx, point_idx_fafa)
+    flatten_selected_points_idx_fafa = selected_points_idx_fafa.view(-1)
+    if (flatten_selected_points_idx_fafa==-1).any() == True:
+        flatten_selected_points_idx_fafa = flatten_selected_points_idx_fa-1
+    embed_idx_fafa = F.embedding(flatten_selected_points_idx_fafa.cpu(), point_id2embedid_fafa).squeeze(-1)
+    point_feats_fafa = F.embedding(embed_idx_fafa.cuda(), values_fafa).view(point_xyz.size(0), -1)
 
     feats = get_embeddings(sampled_xyz, point_xyz, point_feats, voxel_size)
-    inputs = {"xyz": point_xyz, "dists": sampled_dis, "emb": feats.cuda()}
+    feats_fa = get_embeddings(sampled_xyz, point_xyz, point_feats_fa, voxel_size*2)
+    feats_fafa = get_embeddings(sampled_xyz, point_xyz, point_feats_fafa, voxel_size*4)
+    use_multi = True
+    if use_multi:
+        final_feats = torch.cat((feats, feats_fa, feats_fafa), dim=1)
+    else:
+        final_feats = feats
+    inputs = {"xyz": point_xyz, "dists": sampled_dis, "emb": final_feats.cuda()}
     return inputs
 
 
@@ -100,11 +131,21 @@ def get_scores(sdf_network, map_states, voxel_size, bits=8):
     values = map_states["voxel_vertex_emb"]
     point_id2embedid = map_states["voxel_id2embedding_id"]
 
+    feats_fa = map_states["voxel_vertex_idx_fa"]
+    values_fa = map_states["voxel_vertex_emb_fa"]
+    point_id2embedid_fa = map_states["voxel_id2embedding_id_fa"]
+
+    feats_fafa = map_states["voxel_vertex_idx_fafa"]
+    values_fafa = map_states["voxel_vertex_emb_fafa"]
+    point_id2embedid_fafa = map_states["voxel_id2embedding_id_fafa"]
+
     chunk_size = 10000
     res = bits  # -1
 
     @torch.no_grad()
-    def get_scores_once(feats, points, values, point_id2embedid):
+    def get_scores_once(feats, points, values, point_id2embedid, 
+                        feats_fa, values_fa, point_id2embedid_fa,
+                        feats_fafa, values_fafa, point_id2embedid_fafa):
         torch.cuda.empty_cache()
         # sample points inside voxels
         start = -0.5
@@ -137,7 +178,13 @@ def get_scores(sdf_network, map_states, voxel_size, bits=8):
                 "voxel_vertex_idx": feats,
                 "voxel_center_xyz": points,
                 "voxel_vertex_emb": values,
-                "voxel_id2embedding_id": point_id2embedid
+                "voxel_id2embedding_id": point_id2embedid,
+                "voxel_vertex_idx_fa": feats_fa,
+                "voxel_vertex_emb_fa": values_fa,
+                "voxel_id2embedding_id_fa": point_id2embedid_fa,
+                "voxel_vertex_idx_fafa": feats_fafa,
+                "voxel_vertex_emb_fafa": values_fafa,
+                "voxel_id2embedding_id_fafa": point_id2embedid_fafa,
             },
             voxel_size
         )
@@ -150,7 +197,9 @@ def get_scores(sdf_network, map_states, voxel_size, bits=8):
 
     return torch.cat([
         get_scores_once(feats[i: i + chunk_size],
-                        points[i: i + chunk_size].cuda(), values, point_id2embedid)
+                        points[i: i + chunk_size].cuda(), values, point_id2embedid,
+                        feats_fa[i: i + chunk_size], values_fa, point_id2embedid_fa,
+                        feats_fafa[i: i + chunk_size], values_fafa, point_id2embedid_fafa)
         for i in range(0, points.size(0), chunk_size)], 0).view(-1, res, res, res, 1)
 
 
@@ -325,6 +374,8 @@ def render_rays(
 def bundle_adjust_frames(
     keyframe_graph,
     embeddings,
+    embeddings_fa,
+    embeddings_fafa,
     map_states,
     sdf_network,
     loss_criteria,
@@ -343,6 +394,8 @@ def bundle_adjust_frames(
     if profiler is not None:
         profiler.tick("mapping_add_optim")
     optimize_params = [{'params': embeddings, 'lr': learning_rate[0]}]
+    optimize_params += [{'params': embeddings_fa, 'lr': learning_rate[0]}]
+    optimize_params += [{'params': embeddings_fafa, 'lr': learning_rate[0]}]
     if update_decoder:
         optimize_params += [{'params': sdf_network.parameters(),
                              'lr': learning_rate[1]}]

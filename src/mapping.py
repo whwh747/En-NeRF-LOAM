@@ -17,7 +17,7 @@ from pathlib import Path
 import open3d as o3d
 
 torch.classes.load_library(
-    "/disk2/wh/code/nerfloam-modify/third_party/sparse_octree/build/lib.linux-x86_64-cpython-38/svo.cpython-38-x86_64-linux-gnu.so")
+    "/disk2/wh/code/EnNeRF-LOAM/third_party/sparse_octree/build/lib.linux-x86_64-cpython-38/svo.cpython-38-x86_64-linux-gnu.so")
 
 
 def get_network_size(net):
@@ -73,10 +73,16 @@ class Mapping:
         self.mesher = MeshExtractor(args)
 
 
-        self.voxel_id2embedding_id = -torch.ones((int(2e9), 1), dtype=torch.int)
+        self.voxel_id2embedding_id = -torch.ones((int(1e9), 1), dtype=torch.int)
+        self.voxel_id2embedding_id_fa = -torch.ones((int(1e9), 1), dtype=torch.int)
+        self.voxel_id2embedding_id_fafa = -torch.ones((int(1e9), 1), dtype=torch.int)
         self.embeds_exist_search = dict()
         self.current_num_embeds = 0
+        self.current_num_embeds_fa = 0
+        self.current_num_embeds_fafa = 0
         self.dynamic_embeddings = None
+        self.dynamic_embeddings_fa = None
+        self.dynamic_embeddings_fafa = None
 
         self.svo = torch.classes.svo.Octree()
         self.svo.init(256*256*4, embed_dim, self.voxel_size)
@@ -179,6 +185,8 @@ class Mapping:
         bundle_adjust_frames(
             optimize_targets,
             self.dynamic_embeddings,
+            self.dynamic_embeddings_fa,
+            self.dynamic_embeddings_fafa,
             self.map_states,
             self.decoder,
             self.loss_criteria,
@@ -288,14 +296,18 @@ class Mapping:
         points = points@pose[:3, :3].transpose(-1, -2) + pose[:3, 3]
         voxels = torch.div(points, self.voxel_size, rounding_mode='floor')
         self.svo.insert(voxels.cpu().int())
+        self.svo.insert2(voxels.cpu().int())
+        self.svo.insert3(voxels.cpu().int())
         self.update_grid_features()
 
     @torch.enable_grad()
     def get_embeddings(self, points_idx):
-
+        # 每个体素所在树节点最终的八个叶节点
         flatten_idx = points_idx.reshape(-1).long()
+        # 去除掉 == -1 的地方
         valid_flatten_idx = flatten_idx[flatten_idx.ne(-1)]
         existence = F.embedding(valid_flatten_idx, self.voxel_id2embedding_id)
+        # 等于-1的地方置为True
         torch_add_idx = existence.eq(-1).view(-1)
         torch_add = valid_flatten_idx[torch_add_idx]
         if torch_add.shape[0] == 0:
@@ -317,8 +329,66 @@ class Mapping:
         self.voxel_id2embedding_id[torch_add] = torch.arange(start_num, end_num, dtype=torch.int).view(-1, 1)
 
     @torch.enable_grad()
+    def get_embeddings_fa(self, points_idx):
+        # 每个体素所在树节点最终的八个叶节点
+        flatten_idx = points_idx.reshape(-1).long()
+        # 去除掉 == -1 的地方
+        valid_flatten_idx = flatten_idx[flatten_idx.ne(-1)]
+        existence = F.embedding(valid_flatten_idx, self.voxel_id2embedding_id_fa)
+        # 等于-1的地方置为True
+        torch_add_idx = existence.eq(-1).view(-1)
+        torch_add = valid_flatten_idx[torch_add_idx]
+        if torch_add.shape[0] == 0:
+            return
+        start_num = self.current_num_embeds_fa
+        end_num = start_num + torch_add.shape[0]
+        embeddings_add = torch.zeros((end_num-start_num, self.embed_dim),
+                                     dtype=torch.bfloat16)
+        # torch.nn.init.normal_(embeddings_add, std=0.01)
+
+        if self.dynamic_embeddings_fa == None:
+            embeddings = [embeddings_add]
+        else:
+            embeddings = [self.dynamic_embeddings_fa.detach().cpu(), embeddings_add]
+        embeddings = torch.cat(embeddings, dim=0)
+        self.dynamic_embeddings_fa = embeddings.cuda().requires_grad_()
+
+        self.current_num_embeds_fa = end_num
+        self.voxel_id2embedding_id_fa[torch_add] = torch.arange(start_num, end_num, dtype=torch.int).view(-1, 1)
+
+    @torch.enable_grad()
+    def get_embeddings_fafa(self, points_idx):
+        # 每个体素所在树节点最终的八个叶节点
+        flatten_idx = points_idx.reshape(-1).long()
+        # 去除掉 == -1 的地方
+        valid_flatten_idx = flatten_idx[flatten_idx.ne(-1)]
+        existence = F.embedding(valid_flatten_idx, self.voxel_id2embedding_id_fafa)
+        # 等于-1的地方置为True
+        torch_add_idx = existence.eq(-1).view(-1)
+        torch_add = valid_flatten_idx[torch_add_idx]
+        if torch_add.shape[0] == 0:
+            return
+        start_num = self.current_num_embeds_fafa
+        end_num = start_num + torch_add.shape[0]
+        embeddings_add = torch.zeros((end_num-start_num, self.embed_dim),
+                                     dtype=torch.bfloat16)
+        # torch.nn.init.normal_(embeddings_add, std=0.01)
+
+        if self.dynamic_embeddings_fafa == None:
+            embeddings = [embeddings_add]
+        else:
+            embeddings = [self.dynamic_embeddings_fafa.detach().cpu(), embeddings_add]
+        embeddings = torch.cat(embeddings, dim=0)
+        self.dynamic_embeddings_fafa = embeddings.cuda().requires_grad_()
+
+        self.current_num_embeds_fafa = end_num
+        self.voxel_id2embedding_id_fafa[torch_add] = torch.arange(start_num, end_num, dtype=torch.int).view(-1, 1)
+
+    @torch.enable_grad()
     def update_grid_features(self):
-        voxels, children, features = self.svo.get_centres_and_children()
+        # voxels, children, features = self.svo.get_centres_and_children()
+        # voxels, children, features, features_fa = self.svo.get_centres_and_children()
+        voxels, children, features, features_fa, features_fafa = self.svo.get_centres_and_children()
         centres = (voxels[:, :3] + voxels[:, -1:] / 2) * self.voxel_size
         children = torch.cat([children, voxels[:, -1:]], -1)
 
@@ -327,14 +397,49 @@ class Mapping:
 
         map_states = {}
         map_states["voxel_vertex_idx"] = features
+        # a = features.numpy()
+        # b = features_fa.numpy()
+        # np.savetxt('a.txt', a, fmt='%d')
+        # np.savetxt('b.txt', b, fmt='%d')
+        # x=input()
+        # print('features size = ', features.size())
+        # print('children size = ', children.size())
+        # print('children = ', children)
+        # new_column = torch.arange(0, children.shape[0]).unsqueeze(1)
+        # modify_child = torch.cat((new_column, children), dim=1)
+        # numpy_a1 = modify_child.numpy()
+        # np.savetxt('a1.txt', numpy_a1, fmt='%d', delimiter=',')
+        # self.svo.bfs()
+        features_fa = torch.cat((features_fa[-1:], features_fa[:-1]), dim=0)
+        features_fafa = torch.cat((features_fafa[-2:], features_fafa[:-2]), dim=0)
+        # for i in range(features.size(0)):
+        #     if torch.any(torch.eq(features[i], -1)):
+        #         continue
+        #     if i > 500:
+        #         break
+        #     print(i, ' : ', features[i], ' and ', features_fa[i], ' and ', features_fafa[i])
+        # x=input()
+        # for i in range(features_fa.size(0)):
+        #     if torch.any(torch.eq(features_fa[i], -1)):
+        #         continue
+        #     print(i, ' and ', features_fa[i])
+        # x=input()
         centres.requires_grad_()
+        map_states["voxel_vertex_idx_fa"] = features_fa
+        map_states["voxel_vertex_idx_fafa"] = features_fafa
         map_states["voxel_center_xyz"] = centres
         map_states["voxel_structure"] = children
         self.profiler.tick("Creating embedding")
         self.get_embeddings(map_states["voxel_vertex_idx"])
+        self.get_embeddings_fa(map_states["voxel_vertex_idx_fa"])
+        self.get_embeddings_fafa(map_states["voxel_vertex_idx_fafa"])
         self.profiler.tok("Creating embedding")
         map_states["voxel_vertex_emb"] = self.dynamic_embeddings
         map_states["voxel_id2embedding_id"] = self.voxel_id2embedding_id
+        map_states["voxel_vertex_emb_fa"] = self.dynamic_embeddings_fa
+        map_states["voxel_id2embedding_id_fa"] = self.voxel_id2embedding_id_fa
+        map_states["voxel_vertex_emb_fafa"] = self.dynamic_embeddings_fafa
+        map_states["voxel_id2embedding_id_fafa"] = self.voxel_id2embedding_id_fafa
 
         self.map_states = map_states
 
@@ -355,20 +460,32 @@ class Mapping:
         sdf_network = self.decoder
         sdf_network.eval()
 
-        voxels, _, features = self.svo.get_centres_and_children()
+        # voxels, _, features = self.svo.get_centres_and_children()
+        # voxels, _, features, features_fa = self.svo.get_centres_and_children()
+        voxels, _, features, features_fa, features_fafa = self.svo.get_centres_and_children()
         index = features.eq(-1).any(-1)
         voxels = voxels[~index, :]
         features = features[~index, :]
+        features_fa = features_fa[~index, :]
+        features_fafa = features_fafa[~index, :]
         centres = (voxels[:, :3] + voxels[:, -1:] / 2) * self.voxel_size
 
         encoder_states = {}
         encoder_states["voxel_vertex_idx"] = features
+        encoder_states["voxel_vertex_idx_fa"] = features_fa
+        encoder_states["voxel_vertex_idx_fafa"] = features_fafa
         encoder_states["voxel_center_xyz"] = centres
         self.profiler.tick("Creating embedding")
         self.get_embeddings(encoder_states["voxel_vertex_idx"])
+        self.get_embeddings_fa(encoder_states["voxel_vertex_idx_fa"])
+        self.get_embeddings_fafa(encoder_states["voxel_vertex_idx_fafa"])
         self.profiler.tok("Creating embedding")
         encoder_states["voxel_vertex_emb"] = self.dynamic_embeddings
         encoder_states["voxel_id2embedding_id"] = self.voxel_id2embedding_id
+        encoder_states["voxel_vertex_emb_fa"] = self.dynamic_embeddings_fa
+        encoder_states["voxel_id2embedding_id_fa"] = self.voxel_id2embedding_id_fa
+        encoder_states["voxel_vertex_emb_fafa"] = self.dynamic_embeddings_fafa
+        encoder_states["voxel_id2embedding_id_fafa"] = self.voxel_id2embedding_id_fafa
 
         frame_poses = self.get_updated_poses()
         mesh = self.mesher.create_mesh(

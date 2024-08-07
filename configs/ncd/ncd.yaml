@@ -10,11 +10,12 @@ criteria:
 
 decoder_specs:
   depth: 2
-  width: 256
+  width: 128
   in_dim: 16
   skips: []
-  embedder: FFE
+  embedder: ffe
   multires: 0
+  level: 2
 
 tracker_specs:
   N_rays: 2048
